@@ -1,0 +1,3 @@
+cd C:\Users\paulm\Downloads\offline_translator
+.venv\Scripts\Activate.ps1
+python translator.py

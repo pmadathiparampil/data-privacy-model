@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Base64 Decoder</title>
+<!-- Works fully offline. The font link only loads when online; otherwise system fonts are used. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: two side-by-side boxes — paste on the left, decoded result on the right; stacks on phones */
+:root {
+  --bg: #eef1f5; --panel: #ffffff; --fg: #18202b; --muted: #5d6878; --line: #d3d9e2;
+  --accent: #2448c9; --accent-fg: #ffffff; --ok: #1d7a4a; --warn: #9a5b00; --err: #b42318; --code-bg: #f5f7fa;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c; --panel: #181e27; --fg: #e4e9f0; --muted: #96a1b2; --line: #2b3441;
+    --accent: #7d9bff; --accent-fg: #0d1430; --ok: #5fcf93; --warn: #f0b45a; --err: #ff8a7e; --code-bg: #121820;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 40px; display: flex; flex-direction: column; gap: 20px; }
+header h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+header p { margin: 4px 0 0; color: var(--muted); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.label { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+textarea {
+  width: 100%; min-height: 460px; resize: vertical;
+  font-family: var(--mono); font-size: 0.85rem; line-height: 1.5;
+  background: var(--code-bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+}
+#input { word-break: break-all; }
+#output { white-space: pre-wrap; word-break: break-word; }
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.preview { min-height: 460px; height: 70vh; max-height: 900px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; overflow: auto; display: flex; }
+.preview iframe { flex: 1; width: 100%; border: 0; border-radius: 8px; background: #fff; }
+.preview img, .preview video { max-width: 100%; max-height: 100%; margin: auto; display: block; }
+.preview audio { margin: auto; width: 90%; }
+.status { font-size: 0.82rem; font-variant-numeric: tabular-nums; color: var(--muted); display: flex; flex-direction: column; gap: 2px; min-height: 1.2em; }
+.status .ok { color: var(--ok); }
+.status .warn { color: var(--warn); }
+.status .err { color: var(--err); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button, a.btnlink { font-family: var(--sans); font-size: 0.85rem; font-weight: 500; cursor: pointer; border-radius: 8px; padding: 6px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-decoration: none; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:focus-visible, a.btnlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chip { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0; text-transform: none; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--code-bg); color: var(--fg); font-weight: 500; }
+label.toggle { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Base64 Decoder</h1>
+    <p>Paste base64 on the left, even with other text around it. The result appears on the right: text, a PDF or image preview, or a file you can save.</p>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="row">
+        <span class="label">Base64 input</span>
+        <div class="btns">
+          <button id="paste" type="button">Paste</button>
+          <button id="clear" type="button">Clear</button>
+        </div>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder="Paste base64 here. Surrounding text, quotes, JSON, line breaks and data:...;base64, prefixes are fine."></textarea>
+      <div id="inStatus" class="status"></div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <span class="label">Decoded output <span id="typeChip" class="chip" hidden></span></span>
+        <div class="btns">
+          <label class="toggle" id="prettyWrap" hidden><input id="pretty" type="checkbox" checked> Format JSON</label>
+          <label class="toggle" id="rawWrap" hidden><input id="raw" type="checkbox"> Show raw</label>
+          <button id="again" type="button" hidden>Decode again</button>
+          <a id="openLink" class="btnlink" href="#" target="_blank" rel="noopener" hidden>Open in new tab</a>
+          <a id="saveLink" class="btnlink" href="#" hidden>Save</a>
+          <button id="copy" class="primary" type="button" disabled>Copy</button>
+        </div>
+      </div>
+      <textarea id="output" readonly spellcheck="false" placeholder="The decoded result shows up here."></textarea>
+      <div id="preview" class="preview" hidden></div>
+      <div id="outStatus" class="status"></div>
+    </section>
+  </div>
+</div>
+
+<script id="core">
+/* Pure decoding logic: no page access, so it can be tested on its own. */
+var B64Core = (function () {
+  var TOKEN = /[A-Za-z0-9+\/_-]+={0,2}/g;
+
+  function prep(s) {
+    return s
+      .replace(/\\r\\n|\\n|\\r/g, "\n")      // literal \n escapes from JSON or logs
+      .replace(/\\\//g, "/")                  // JSON-escaped slashes
+      .replace(/%2B/gi, "+").replace(/%2F/gi, "/").replace(/%3D/gi, "="); // URL-encoded
+  }
+
+  // Find the base64 inside arbitrary pasted text.
+  function extract(input) {
+    var s = prep(input), toks = [], m;
+    TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(s))) toks.push({ t: m[0], start: m.index, end: m.index + m[0].length });
+    if (!toks.length) return null;
+
+    // Join tokens split only by line breaks/spaces when the earlier piece looks like a wrapped base64 line.
+    var groups = [], cur = null;
+    for (var i = 0; i < toks.length; i++) {
+      var tk = toks[i];
+      if (cur) {
+        var prev = toks[i - 1], gap = s.slice(prev.end, tk.start);
+        if (/^\s+$/.test(gap) && prev.t.length >= 16 && prev.t.length % 4 === 0 && !/=$/.test(prev.t)) {
+          cur.parts.push(tk.t); continue;
+        }
+        groups.push(cur);
+      }
+      cur = { parts: [tk.t] };
+    }
+    groups.push(cur);
+
+    groups.forEach(function (g) {
+      // Drop a short trailing word that got glued on after the last wrapped line.
+      var joined = g.parts.join("");
+      if (g.parts.length > 1 && joined.replace(/=+$/, "").length % 4 !== 0) {
+        var last = g.parts[g.parts.length - 1];
+        if ((joined.length - last.length) % 4 === 0 && last.length < g.parts[0].length) {
+          g.parts.pop(); joined = g.parts.join("");
+        }
+      }
+      g.b64 = joined;
+    });
+    groups.sort(function (a, b) { return b.b64.length - a.b64.length; });
+
+    var best = groups[0];
+    var meaningful = s.replace(/\s/g, "").length;
+    var ignored = meaningful - best.b64.length;
+    // With surrounding text present, a short token is almost certainly just a word.
+    if (ignored > 0 && best.b64.length < 16) return null;
+    var others = groups.filter(function (g) { return g !== best && g.b64.length >= 16; }).length;
+    return { b64: best.b64, ignored: ignored, others: others };
+  }
+
+  function normalize(b64) {
+    var s = b64.replace(/=+$/, "").replace(/-/g, "+").replace(/_/g, "/");
+    if (s.length % 4 === 1) s = s.slice(0, -1); // one stray character can't be valid; drop it
+    return s + "====".slice(0, (4 - (s.length % 4)) % 4);
+  }
+
+  function decode(b64) {
+    var bin = atob(normalize(b64)), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function ascii(b, at, str) {
+    if (b.length < at + str.length) return false;
+    for (var i = 0; i < str.length; i++) if (b[at + i] !== str.charCodeAt(i)) return false;
+    return true;
+  }
+  function u32le(b, at) { return (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0; }
+  function latin1(b, from, to) {
+    var s = "", end = Math.min(b.length, to);
+    for (var i = Math.max(0, from); i < end; i += 8192) s += String.fromCharCode.apply(null, b.subarray(i, Math.min(end, i + 8192)));
+    return s;
+  }
+  function tailHas(b, str, span) { return latin1(b, b.length - span, b.length).indexOf(str) !== -1; }
+
+  // Identify binary file types by their signature bytes.
+  function detectBinary(b) {
+    var f = function (ext, mime, view, label, warn) { return { ext: ext, mime: mime, view: view, label: label || ext.toUpperCase(), warn: warn || null }; };
+    if (ascii(b, 0, "%PDF")) return f("pdf", "application/pdf", "frame", "PDF", tailHas(b, "%%EOF", 2048) ? null : "This PDF looks incomplete. The base64 may have been cut off when copied.");
+    if (b[0] === 0x89 && ascii(b, 1, "PNG")) return f("png", "image/png", "img", "PNG", tailHas(b, "IEND", 64) ? null : "This image looks incomplete. The base64 may have been cut off.");
+    if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return f("jpg", "image/jpeg", "img", "JPEG", tailHas(b, "\xFF\xD9", 64) ? null : "This image looks incomplete. The base64 may have been cut off.");
+    if (ascii(b, 0, "GIF87a") || ascii(b, 0, "GIF89a")) return f("gif", "image/gif", "img");
+    if (ascii(b, 0, "RIFF") && ascii(b, 8, "WEBP")) return f("webp", "image/webp", "img", "WebP");
+    if (ascii(b, 0, "RIFF") && ascii(b, 8, "WAVE")) return f("wav", "audio/wav", "audio", "WAV audio");
+    if (ascii(b, 0, "BM") && b.length >= 26) {
+      var size = u32le(b, 2), off = u32le(b, 10);
+      if (b[6] === 0 && b[7] === 0 && b[8] === 0 && b[9] === 0 && size > 26 && size <= b.length + 2 && off >= 26 && off < b.length) return f("bmp", "image/bmp", "img", "BMP");
+    }
+    if (b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0 && b.length > 22) return f("ico", "image/x-icon", "img", "ICO");
+    if (ascii(b, 0, "II*\x00") || ascii(b, 0, "MM\x00*")) return f("tif", "image/tiff", null, "TIFF image");
+    if (ascii(b, 4, "ftyp")) {
+      var brand = latin1(b, 8, 12);
+      if (brand === "M4A ") return f("m4a", "audio/mp4", "audio", "M4A audio");
+      if (brand === "qt  ") return f("mov", "video/quicktime", "video", "MOV video");
+      if (brand.indexOf("hei") === 0 || brand === "mif1") return f("heic", "image/heic", null, "HEIC image");
+      return f("mp4", "video/mp4", "video", "MP4 video");
+    }
+    if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) return f("webm", "video/webm", "video", "WebM video");
+    if (ascii(b, 0, "ID3") || (b[0] === 0xFF && (b[1] & 0xE0) === 0xE0)) return f("mp3", "audio/mpeg", "audio", "MP3 audio");
+    if (ascii(b, 0, "OggS")) return f("ogg", "audio/ogg", "audio", "OGG audio");
+    if (ascii(b, 0, "fLaC")) return f("flac", "audio/flac", "audio", "FLAC audio");
+    if (ascii(b, 0, "PK\x03\x04") || ascii(b, 0, "PK\x05\x06")) {
+      var scan = latin1(b, 0, 65536) + latin1(b, b.length - 65536, b.length);
+      if (scan.indexOf("mimetypeapplication/epub+zip") !== -1) return f("epub", "application/epub+zip", null, "EPUB");
+      if (scan.indexOf("mimetypeapplication/vnd.oasis.opendocument.text") !== -1) return f("odt", "application/octet-stream", null, "OpenDocument text");
+      if (scan.indexOf("mimetypeapplication/vnd.oasis.opendocument.spreadsheet") !== -1) return f("ods", "application/octet-stream", null, "OpenDocument sheet");
+      if (scan.indexOf("word/") !== -1) return f("docx", "application/octet-stream", null, "Word (DOCX)");
+      if (scan.indexOf("xl/") !== -1) return f("xlsx", "application/octet-stream", null, "Excel (XLSX)");
+      if (scan.indexOf("ppt/") !== -1) return f("pptx", "application/octet-stream", null, "PowerPoint (PPTX)");
+      return f("zip", "application/zip", null, "ZIP archive");
+    }
+    if (b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0) return f("bin", "application/octet-stream", null, "Old Office file (.doc/.xls/.ppt)", "Old Office formats share one signature. Save it, then rename it to .doc, .xls or .ppt to match what it is.");
+    if (b[0] === 0x1F && b[1] === 0x8B) return f("gz", "application/gzip", null, "GZIP archive");
+    if (ascii(b, 0, "7z\xBC\xAF\x27\x1C")) return f("7z", "application/octet-stream", null, "7-Zip archive");
+    if (ascii(b, 0, "Rar!\x1A\x07")) return f("rar", "application/octet-stream", null, "RAR archive");
+    if (ascii(b, 0, "SQLite format 3\x00")) return f("sqlite", "application/octet-stream", null, "SQLite database");
+    if (ascii(b, 0, "MZ") && b.length > 64) return f("exe", "application/octet-stream", null, "Windows program", "This is a Windows program. Only run it if you trust where it came from.");
+    return null;
+  }
+
+  // Turn bytes into text, handling BOMs, UTF-16 and older Windows encodings.
+  function decodeText(b) {
+    var enc = "utf-8", start = 0, note = null;
+    if (b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) start = 3;
+    else if (b[0] === 0xFF && b[1] === 0xFE) { enc = "utf-16le"; start = 2; }
+    else if (b[0] === 0xFE && b[1] === 0xFF) { enc = "utf-16be"; start = 2; }
+    else if (b.length >= 8) {
+      var n = Math.min(b.length - (b.length % 2), 4000), evenZ = 0, oddZ = 0;
+      for (var i = 0; i < n; i += 2) { if (b[i] === 0) evenZ++; if (b[i + 1] === 0) oddZ++; }
+      var half = n / 2;
+      if (oddZ > half * 0.4 && evenZ < half * 0.05) enc = "utf-16le";
+      else if (evenZ > half * 0.4 && oddZ < half * 0.05) enc = "utf-16be";
+    }
+    var body = b.subarray(start), text;
+    if (enc === "utf-8") {
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(body); }
+      catch (e) {
+        try { text = new TextDecoder("windows-1252").decode(body); note = "Read as Windows-1252 text (it isn't valid UTF-8)."; }
+        catch (e2) { text = latin1(body, 0, body.length); }
+      }
+    } else {
+      text = new TextDecoder(enc).decode(body);
+      note = "Read as " + enc.toUpperCase() + " text.";
+    }
+    var ctrl = 0, nul = false, len = Math.min(text.length, 20000);
+    for (var j = 0; j < len; j++) {
+      var c = text.charCodeAt(j);
+      if (c === 0) nul = true;
+      if ((c < 9 || (c > 13 && c < 32) || c === 11 || c === 12)) ctrl++;
+    }
+    var binary = nul || (len > 0 && ctrl / len > 0.02);
+    return { text: text, binary: binary, note: note };
+  }
+
+  function classifyText(t) {
+    var s = t.replace(/^\s+/, "").slice(0, 2000);
+    if (/^<svg[\s>]/i.test(s) || (/^<\?xml/i.test(s) && /<svg[\s>]/i.test(s))) return { ext: "svg", mime: "image/svg+xml", view: "img", label: "SVG image" };
+    if (/^(<!doctype html|<html[\s>])/i.test(s)) return { ext: "html", mime: "text/html", view: "html", label: "HTML" };
+    if (/^\{\\rtf/.test(s)) return { ext: "rtf", mime: "application/rtf", view: null, label: "RTF" };
+    if (/^[\[{]/.test(s)) { try { JSON.parse(t); return { ext: "json", mime: "application/json", view: null, label: "JSON" }; } catch (e) {} }
+    if (/^<\?xml/i.test(s)) return { ext: "xml", mime: "application/xml", view: null, label: "XML" };
+    return { ext: "txt", mime: "text/plain", view: null, label: "Text" };
+  }
+
+  // Is the decoded text itself base64 (encoded twice)?
+  function looksLikeBase64(t) {
+    var s = t.replace(/\s+/g, "");
+    return s.length >= 16 && /^[A-Za-z0-9+\/_-]+={0,2}$/.test(s) && s.replace(/=+$/, "").length % 4 !== 1 && /[0-9]/.test(s) && /[A-Z]/.test(s) && /[a-z]/.test(s);
+  }
+
+  return { extract: extract, decode: decode, detectBinary: detectBinary, decodeText: decodeText, classifyText: classifyText, looksLikeBase64: looksLikeBase64, latin1: latin1 };
+})();
+</script>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var input = $("input"), output = $("output"), preview = $("preview");
+  var inStatus = $("inStatus"), outStatus = $("outStatus"), typeChip = $("typeChip");
+  var copyBtn = $("copy"), pretty = $("pretty"), prettyWrap = $("prettyWrap");
+  var raw = $("raw"), rawWrap = $("rawWrap"), again = $("again"), openLink = $("openLink"), saveLink = $("saveLink");
+  var blobUrl = null, timer = null;
+  var MAX_SHOWN = 1000000;
+
+  function setMsgs(el, msgs) {
+    el.replaceChildren();
+    msgs.forEach(function (m) { var d = document.createElement("div"); d.className = m[1] || ""; d.textContent = m[0]; el.append(d); });
+  }
+
+  function reset() {
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    preview.replaceChildren(); preview.hidden = true; output.hidden = false; output.value = "";
+    [typeChip, prettyWrap, rawWrap, again, openLink, saveLink].forEach(function (el) { el.hidden = true; });
+    copyBtn.disabled = true;
+    setMsgs(outStatus, []);
+  }
+
+  function showText(t) {
+    output.value = t.length > MAX_SHOWN ? t.slice(0, MAX_SHOWN) + "\n\n… (display cut off here to keep the page fast. Use Save to get the full file.)" : t;
+    output.hidden = false; preview.hidden = true;
+    copyBtn.disabled = false;
+  }
+
+  function showPreview(view) {
+    var el;
+    if (view === "frame") { el = document.createElement("iframe"); el.title = "PDF preview"; el.src = blobUrl; }
+    else if (view === "html") { el = document.createElement("iframe"); el.title = "HTML preview"; el.setAttribute("sandbox", ""); el.src = blobUrl; }
+    else if (view === "img") { el = document.createElement("img"); el.alt = "Decoded image"; el.src = blobUrl; }
+    else if (view === "video") { el = document.createElement("video"); el.controls = true; el.src = blobUrl; }
+    else if (view === "audio") { el = document.createElement("audio"); el.controls = true; el.src = blobUrl; }
+    el.addEventListener("error", function () { setMsgs(outStatus, [["Your browser can't preview this. Use Save to open it in another app.", "warn"]]); });
+    preview.replaceChildren(el); preview.hidden = false; output.hidden = true;
+    copyBtn.disabled = true;
+  }
+
+  function render() {
+    reset();
+    var found = B64Core.extract(input.value);
+    if (!input.value.trim()) { setMsgs(inStatus, []); return; }
+    if (!found) { setMsgs(inStatus, [["No base64 found. Check that you copied the encoded part.", "err"]]); return; }
+
+    var bytes;
+    try { bytes = B64Core.decode(found.b64); }
+    catch (e) { setMsgs(inStatus, [["This doesn't decode as base64. Check that you copied the whole string.", "err"]]); return; }
+    if (!bytes.length) { setMsgs(inStatus, [["The base64 is empty.", "err"]]); return; }
+
+    var inMsgs = [["Decoded " + bytes.length.toLocaleString() + " bytes", "ok"]];
+    if (found.ignored > 0) inMsgs.push(["Ignored " + found.ignored.toLocaleString() + " characters of surrounding text.", ""]);
+    if (found.others > 0) inMsgs.push(["Found " + (found.others + 1) + " separate base64 blocks. Showing the longest one.", "warn"]);
+    setMsgs(inStatus, inMsgs);
+
+    var outMsgs = [];
+    var info = B64Core.detectBinary(bytes), textInfo = null;
+    if (!info) {
+      textInfo = B64Core.decodeText(bytes);
+      if (textInfo.binary) info = { ext: "bin", mime: "application/octet-stream", view: null, label: "Unknown binary", warn: "This is binary data in a format this page doesn't recognise. Use Save to keep it." };
+      else info = B64Core.classifyText(textInfo.text);
+    }
+
+    blobUrl = URL.createObjectURL(new Blob([bytes], { type: info.mime }));
+    typeChip.textContent = info.label; typeChip.hidden = false;
+    saveLink.href = blobUrl; saveLink.download = "decoded." + info.ext; saveLink.hidden = false;
+    if (info.warn) outMsgs.push([info.warn, "warn"]);
+    if (textInfo && textInfo.note) outMsgs.push([textInfo.note, ""]);
+
+    var isText = textInfo && !textInfo.binary;
+
+    if (info.view) {
+      rawWrap.hidden = false;
+      openLink.href = blobUrl; openLink.hidden = info.view === "html";
+      if (raw.checked) {
+        showText(isText ? textInfo.text : B64Core.latin1(bytes, 0, MAX_SHOWN));
+        if (!isText) outMsgs.push(["Raw bytes of a " + info.label + " file. Untick Show raw to see the preview.", ""]);
+      } else {
+        showPreview(info.view);
+        if (info.view === "frame") outMsgs.push(["If the preview stays blank, your browser may be set to download PDFs. Use Open in new tab or Save.", ""]);
+        if (info.view === "html") outMsgs.push(["HTML preview with scripts turned off.", ""]);
+      }
+    } else if (isText) {
+      var t = textInfo.text;
+      if (info.ext === "json") {
+        prettyWrap.hidden = false;
+        if (pretty.checked) { try { t = JSON.stringify(JSON.parse(t), null, 2); } catch (e) {} }
+      }
+      showText(t);
+      if (B64Core.looksLikeBase64(textInfo.text)) {
+        again.hidden = false;
+        outMsgs.push(["The result is base64 too (it was encoded twice). Use Decode again.", "warn"]);
+      }
+    } else {
+      showText(B64Core.latin1(bytes, 0, MAX_SHOWN));
+      outMsgs.push(["Shown as raw bytes. Use Save to open it in the right app.", ""]);
+    }
+    setMsgs(outStatus, outMsgs);
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    if (input.value.length > 200000) timer = setTimeout(render, 300); else render();
+  }
+
+  copyBtn.addEventListener("click", function () {
+    var done = function () { copyBtn.textContent = "Copied"; setTimeout(function () { copyBtn.textContent = "Copy"; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(output.value).then(done, function () { output.select(); document.execCommand("copy"); done(); });
+    } else { output.select(); document.execCommand("copy"); done(); }
+  });
+
+  $("paste").addEventListener("click", function () {
+    if (!navigator.clipboard || !navigator.clipboard.readText) { input.focus(); setMsgs(inStatus, [["Press Ctrl+V (or Cmd+V) to paste.", ""]]); return; }
+    navigator.clipboard.readText().then(function (t) { input.value = t; render(); }, function () { input.focus(); setMsgs(inStatus, [["Press Ctrl+V (or Cmd+V) to paste.", ""]]); });
+  });
+
+  again.addEventListener("click", function () { input.value = output.value; raw.checked = false; render(); });
+  $("clear").addEventListener("click", function () { input.value = ""; render(); input.focus(); });
+  input.addEventListener("input", schedule);
+  pretty.addEventListener("change", render);
+  raw.addEventListener("change", render);
+  input.focus();
+})();
+</script>
+</body>
+</html>

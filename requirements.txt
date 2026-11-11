@@ -1,0 +1,8 @@
+torch
+transformers>=4.38,<5
+sentencepiece
+protobuf
+huggingface_hub
+langcodes
+language_data
+lingua-language-detector

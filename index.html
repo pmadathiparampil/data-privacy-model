@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline Translator</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --text: #1b1f24; --muted: #5d6672;
+    --border: #d9dde3; --accent: #2f6fde; --accent-text: #ffffff;
+    --danger: #b42318; --ok: #1f7a4d; --warn: #8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111418; --panel: #1a1e24; --text: #e7eaee; --muted: #9aa4b1;
+      --border: #2d333c; --accent: #6b9cf0; --accent-text: #0b1220;
+      --danger: #f97066; --ok: #47cd89; --warn: #f5b84a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111418; --panel: #1a1e24; --text: #e7eaee; --muted: #9aa4b1;
+    --border: #2d333c; --accent: #6b9cf0; --accent-text: #0b1220;
+    --danger: #f97066; --ok: #47cd89; --warn: #f5b84a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  }
+  header, main { max-width: 1100px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; padding-top: 22px; padding-bottom: 12px;
+  }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .status {
+    font-size: 13px; padding: 4px 10px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); background: var(--panel);
+  }
+  .status.ready { color: var(--ok); }
+  .status.loading { color: var(--warn); }
+  .status.error { color: var(--danger); }
+  main { padding-bottom: 32px; }
+  .bar { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; margin-bottom: 10px; }
+  select, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  select { width: 100%; padding: 9px 10px; min-width: 0; }
+  button { padding: 9px 14px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; padding: 10px 22px; }
+  .swap { font-size: 18px; line-height: 1; padding: 8px 12px; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .pane {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    display: flex; flex-direction: column; min-height: 320px; min-width: 0;
+  }
+  textarea, .output { flex: 1; padding: 14px; font-size: 16px; line-height: 1.55; font-family: inherit; }
+  textarea { border: 0; outline: none; resize: vertical; background: transparent; color: var(--text); min-height: 270px; }
+  .output { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .output:empty::before { content: attr(data-placeholder); color: var(--muted); }
+  .pane footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 8px 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; min-height: 46px;
+  }
+  .pane footer button { padding: 5px 12px; font-size: 13px; }
+  .actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .hint, .msg { font-size: 13px; color: var(--muted); }
+  .msg.error { color: var(--danger); }
+  @media (max-width: 720px) {
+    .bar { grid-template-columns: 1fr auto; }
+    .bar #tgt { grid-column: 1 / -1; }
+    .panes { grid-template-columns: 1fr; }
+    .pane { min-height: 220px; }
+    textarea { min-height: 180px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Offline Translator</h1>
+  <span id="status" class="status loading">Connecting…</span>
+</header>
+<main>
+  <div class="bar">
+    <select id="src" aria-label="Translate from"></select>
+    <button id="swap" class="swap" title="Swap languages" aria-label="Swap languages">⇄</button>
+    <select id="tgt" aria-label="Translate to"></select>
+  </div>
+
+  <div class="panes">
+    <section class="pane">
+      <textarea id="input" dir="auto" placeholder="Type or paste text to translate…" spellcheck="false"></textarea>
+      <footer><span id="detected"></span><span id="count">0 characters</span></footer>
+    </section>
+    <section class="pane">
+      <div id="output" class="output" dir="auto" aria-live="polite" data-placeholder="The translation appears here"></div>
+      <footer><span id="timing"></span><button id="copy" disabled>Copy</button></footer>
+    </section>
+  </div>
+
+  <div class="actions">
+    <button id="go" class="primary" disabled>Translate</button>
+    <span class="hint">or press Ctrl + Enter</span>
+    <span id="msg" class="msg"></span>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  };
+  let languages = [], ready = false, busy = false, lastDetected = null;
+
+  function showMsg(text, isError = false) {
+    $("msg").textContent = text || "";
+    $("msg").className = "msg" + (isError ? " error" : "");
+  }
+
+  function updateButton() {
+    $("go").disabled = !ready || busy || !$("input").value.trim();
+    $("go").textContent = busy ? "Translating…" : "Translate";
+  }
+
+  function fill(select, pinned, withAuto, detectAvailable) {
+    select.innerHTML = "";
+    if (withAuto) {
+      const auto = new Option("Detect language", "auto");
+      auto.disabled = !detectAvailable;
+      select.add(auto);
+    }
+    const byCode = Object.fromEntries(languages.map((l) => [l.code, l]));
+    if (pinned.length) {
+      const group = document.createElement("optgroup");
+      group.label = "Common";
+      pinned.forEach((code) => byCode[code] && group.appendChild(new Option(byCode[code].name, code)));
+      select.appendChild(group);
+    }
+    const all = document.createElement("optgroup");
+    all.label = `All languages (${languages.length})`;
+    languages.forEach((l) => { const o = new Option(l.name, l.code); o.title = l.code; all.appendChild(o); });
+    select.appendChild(all);
+  }
+
+  function choose(select, preferred, fallback) {
+    select.value = preferred || "";
+    if (!select.value || select.selectedOptions[0]?.disabled) select.value = fallback;
+  }
+
+  async function init() {
+    try {
+      const data = await (await fetch("/api/languages")).json();
+      languages = data.languages;
+      fill($("src"), data.pinned, true, data.detect_available);
+      fill($("tgt"), data.pinned, false);
+      choose($("src"), store.get("src"), data.detect_available ? "auto" : "eng_Latn");
+      choose($("tgt"), store.get("tgt"), "eng_Latn");
+    } catch {
+      showMsg("Can't reach the translator. Is translator.py still running?", true);
+    }
+    pollStatus();
+  }
+
+  async function pollStatus() {
+    const el = $("status");
+    try {
+      const s = await (await fetch("/api/status")).json();
+      el.className = "status " + s.status;
+      if (s.status === "ready") {
+        el.textContent = `Ready · ${s.model} model · ${s.device === "cuda" ? "GPU" : "CPU"}`;
+        ready = true; updateButton(); return;
+      }
+      if (s.status === "error") {
+        el.textContent = "Model failed to load";
+        showMsg(s.error, true); return;
+      }
+      el.textContent = "Loading model…";
+    } catch {
+      el.className = "status error"; el.textContent = "Not connected";
+    }
+    setTimeout(pollStatus, 1500);
+  }
+
+  async function translate() {
+    const text = $("input").value;
+    if (!text.trim() || busy || !ready) return;
+    busy = true; updateButton(); showMsg("");
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, source: $("src").value, target: $("tgt").value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Translation failed.");
+      $("output").textContent = data.translation;
+      lastDetected = data.detected ? data.detected.code : null;
+      $("detected").textContent = data.detected ? `Detected: ${data.detected.name}` : "";
+      $("timing").textContent = data.seconds ? `${data.seconds} s` : "";
+      $("copy").disabled = !data.translation;
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      busy = false; updateButton();
+    }
+  }
+
+  function swap() {
+    let src = $("src").value;
+    const tgt = $("tgt").value;
+    if (src === "auto") src = lastDetected;
+    if (!src) { showMsg("Pick a source language first, then swap.", true); return; }
+    $("src").value = tgt; $("tgt").value = src;
+    const out = $("output").textContent;
+    if (out) { $("input").value = out; $("output").textContent = ""; $("copy").disabled = true; }
+    $("detected").textContent = ""; $("timing").textContent = "";
+    store.set("src", $("src").value); store.set("tgt", $("tgt").value);
+    onInput();
+  }
+
+  async function copy() {
+    const text = $("output").textContent;
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const range = document.createRange(); range.selectNodeContents($("output"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand("copy"); sel.removeAllRanges();
+    }
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy"), 1200);
+  }
+
+  function onInput() {
+    const n = $("input").value.length;
+    $("count").textContent = `${n.toLocaleString()} character${n === 1 ? "" : "s"}`;
+    updateButton();
+  }
+
+  $("go").addEventListener("click", translate);
+  $("swap").addEventListener("click", swap);
+  $("copy").addEventListener("click", copy);
+  $("input").addEventListener("input", onInput);
+  $("src").addEventListener("change", () => { store.set("src", $("src").value); $("detected").textContent = ""; });
+  $("tgt").addEventListener("change", () => store.set("tgt", $("tgt").value));
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); translate(); }
+  });
+
+  init();
+</script>
+</body>
+</html>
